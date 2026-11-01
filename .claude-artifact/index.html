@@ -1,0 +1,777 @@
+<title>FlipBaca</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Literata:opsz,wght@7..72,500;7..72,700&display=swap">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/page-flip@2.0.7/dist/js/page-flip.browser.js"></script>
+<style>
+/* Layout: two full-height views. Home = a shelf of saved PDFs; Reader = top bar, dark "desk" stage with the book, bottom page slider. Every control is at least 52px for fingers. */
+:root {
+  --bg: #EDF0F4;
+  --surface: #FFFFFF;
+  --stage: #D6DCE5;
+  --fg: #182032;
+  --muted: #586378;
+  --line: #CDD4DF;
+  --accent: #1D5BD6;
+  --accent-fg: #FFFFFF;
+  --danger: #C7352B;
+  --paper: #FFFFFF;
+  --paper-ink: #8C96A8;
+  --shadow: 0 10px 30px rgba(20, 30, 55, .18);
+  --font-ui: "Atkinson Hyperlegible", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-display: "Literata", Georgia, "Times New Roman", serif;
+  --tap: 56px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #11141A; --surface: #1A1F28; --stage: #090B0F; --fg: #E7EBF2; --muted: #9AA4B6;
+    --line: #2B3240; --accent: #77A2FF; --accent-fg: #0A1022; --danger: #FF7A6E;
+    --paper: #FFFFFF; --paper-ink: #8C96A8; --shadow: 0 10px 30px rgba(0,0,0,.55); color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #11141A; --surface: #1A1F28; --stage: #090B0F; --fg: #E7EBF2; --muted: #9AA4B6;
+  --line: #2B3240; --accent: #77A2FF; --accent-fg: #0A1022; --danger: #FF7A6E;
+  --paper: #FFFFFF; --paper-ink: #8C96A8; --shadow: 0 10px 30px rgba(0,0,0,.55); color-scheme: dark;
+}
+html, body { height: 100%; }
+body {
+  background: var(--bg); color: var(--fg); font-family: var(--font-ui); font-size: 17px;
+  -webkit-tap-highlight-color: transparent; overscroll-behavior: none;
+}
+* { box-sizing: border-box; }
+button, input { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+
+/* ---------- shared buttons ---------- */
+.btn {
+  min-height: var(--tap); padding: 0 22px; border-radius: 14px; border: 1px solid var(--line);
+  background: var(--surface); display: inline-flex; align-items: center; justify-content: center; gap: 10px;
+  font-weight: 700; font-size: 17px; touch-action: manipulation;
+}
+.btn.primary { background: var(--accent); color: var(--accent-fg); border-color: transparent; }
+.btn svg { width: 24px; height: 24px; flex: none; }
+.icon-btn {
+  width: var(--tap); height: var(--tap); border-radius: 14px; border: 0; background: transparent;
+  display: grid; place-items: center; touch-action: manipulation; flex: none;
+}
+.icon-btn svg { width: 28px; height: 28px; }
+.icon-btn:active, .btn:active { transform: scale(.96); }
+.icon-btn[aria-pressed="true"] { background: var(--accent); color: var(--accent-fg); }
+.icon-btn:disabled { opacity: .3; cursor: default; }
+
+/* ---------- home ---------- */
+#home { height: 100%; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+.home-inner {
+  max-width: 1100px; margin: 0 auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 28px 48px;
+  display: grid; gap: 28px;
+}
+.brand { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; flex-wrap: wrap; }
+.brand h1 { font-family: var(--font-display); font-size: clamp(34px, 6vw, 52px); line-height: 1; margin: 0; letter-spacing: -.01em; }
+.brand p { margin: 8px 0 0; color: var(--muted); max-width: 46ch; }
+.drop {
+  border: 2px dashed var(--line); border-radius: 20px; padding: 26px; display: flex; gap: 18px;
+  align-items: center; justify-content: space-between; flex-wrap: wrap; background: var(--surface);
+}
+.drop.over { border-color: var(--accent); }
+.drop p { margin: 0; color: var(--muted); min-width: 0; }
+.drop strong { color: var(--fg); display: block; font-size: 19px; margin-bottom: 4px; }
+.shelf-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.shelf-head h2 { margin: 0; font-size: 14px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+.shelf-head span { color: var(--muted); font-size: 15px; }
+.shelf { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 26px 20px; }
+.book { display: grid; gap: 10px; align-content: start; position: relative; min-width: 0; }
+.book-open { border: 0; padding: 0; background: none; text-align: left; display: grid; gap: 10px; min-width: 0; }
+.cover {
+  aspect-ratio: 3 / 4; max-width: 100%; border-radius: 4px 10px 10px 4px; background: var(--paper);
+  box-shadow: var(--shadow); overflow: hidden; position: relative; display: grid; place-items: center;
+}
+.cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.cover::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 8px; background: linear-gradient(90deg, rgba(0,0,0,.18), rgba(0,0,0,0)); }
+.book-name { font-weight: 700; line-height: 1.25; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; word-break: break-word; }
+.book-meta { color: var(--muted); font-size: 15px; font-variant-numeric: tabular-nums; }
+.progress { height: 4px; border-radius: 4px; background: var(--line); overflow: hidden; }
+.progress i { display: block; height: 100%; background: var(--accent); }
+.del {
+  position: absolute; top: 6px; right: 6px; min-width: 48px; height: 48px; border-radius: 12px; border: 0;
+  background: rgba(15, 20, 30, .62); color: #FFFFFF; display: grid; place-items: center; padding: 0 12px; font-weight: 700; font-size: 15px;
+}
+.del svg { width: 22px; height: 22px; }
+.del.confirm { background: var(--danger); color: #FFFFFF; }
+.note { color: var(--muted); font-size: 15px; margin: 0; }
+
+/* ---------- reader ---------- */
+#reader { height: 100%; display: grid; grid-template-rows: auto 1fr auto; background: var(--stage); }
+.bar {
+  background: var(--surface); display: flex; align-items: center; gap: 6px;
+  padding-left: max(8px, env(safe-area-inset-left, 0px)); padding-right: max(8px, env(safe-area-inset-right, 0px));
+  padding-block: 6px; min-width: 0;
+}
+.top { border-bottom: 1px solid var(--line); }
+.bottom { border-top: 1px solid var(--line); gap: 14px; padding-block: 8px; }
+.title { flex: 1; min-width: 0; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 0 8px; }
+.back { gap: 6px; padding: 0 14px 0 8px; border: 0; background: transparent; }
+.stage { position: relative; overflow: hidden; touch-action: none; min-height: 0; }
+#host { position: absolute; inset: 0; display: grid; place-items: center; }
+.nav {
+  position: absolute; top: 50%; transform: translateY(-50%); width: 64px; height: 64px; border-radius: 50%;
+  border: 1px solid var(--line); background: var(--surface); box-shadow: var(--shadow); display: grid; place-items: center; z-index: 5;
+  touch-action: manipulation;
+}
+.nav svg { width: 32px; height: 32px; }
+.nav:active { transform: translateY(-50%) scale(.94); }
+.nav:disabled { opacity: 0; pointer-events: none; }
+#prev { left: max(12px, env(safe-area-inset-left, 0px)); }
+#next { right: max(12px, env(safe-area-inset-right, 0px)); }
+.pageno {
+  min-height: 48px; min-width: 110px; padding: 0 14px; border-radius: 12px; border: 1px solid var(--line); background: var(--bg);
+  font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; flex: none;
+}
+.slider-wrap { flex: 1; min-width: 0; position: relative; display: flex; align-items: center; height: 48px; }
+input[type="range"] { -webkit-appearance: none; appearance: none; width: 100%; height: 48px; background: transparent; margin: 0; }
+input[type="range"]::-webkit-slider-runnable-track { height: 8px; border-radius: 8px; background: linear-gradient(90deg, var(--accent) var(--fill, 0%), var(--line) var(--fill, 0%)); }
+input[type="range"]::-moz-range-track { height: 8px; border-radius: 8px; background: var(--line); }
+input[type="range"]::-moz-range-progress { height: 8px; border-radius: 8px; background: var(--accent); }
+input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 34px; height: 34px; margin-top: -13px; border-radius: 50%; background: var(--surface); border: 3px solid var(--accent); box-shadow: 0 2px 8px rgba(0,0,0,.25); }
+input[type="range"]::-moz-range-thumb { width: 30px; height: 30px; border-radius: 50%; background: var(--surface); border: 3px solid var(--accent); }
+.bubble {
+  position: absolute; bottom: 54px; transform: translateX(-50%); background: var(--fg); color: var(--bg);
+  padding: 8px 14px; border-radius: 10px; font-weight: 700; font-variant-numeric: tabular-nums; pointer-events: none; white-space: nowrap;
+}
+
+/* page-flip library styles (inlined, the CDN only serves its script) */
+.stf__parent { position: relative; display: block; box-sizing: border-box; transform: translateZ(0); touch-action: none; }
+.sft__wrapper { position: relative; width: 100%; box-sizing: border-box; }
+.stf__parent canvas { position: absolute; width: 100%; height: 100%; left: 0; top: 0; }
+.stf__block { position: absolute; width: 100%; height: 100%; box-sizing: border-box; perspective: 2000px; }
+.stf__item { display: none; position: absolute; transform-style: preserve-3d; }
+.stf__outerShadow, .stf__innerShadow, .stf__hardShadow, .stf__hardInnerShadow { position: absolute; left: 0; top: 0; }
+.page { background: var(--paper); overflow: hidden; }
+.page img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; display: block; user-select: none; -webkit-user-select: none; -webkit-user-drag: none; pointer-events: none; }
+.page .pnum { position: absolute; inset: 0; display: grid; place-items: center; color: var(--paper-ink); font-family: var(--font-display); font-size: 28px; }
+.page.ready .pnum { display: none; }
+
+/* jump panel, zoom, loading, toast */
+.sheet-bg { position: fixed; inset: 0; background: rgba(5, 8, 14, .5); z-index: 40; display: grid; place-items: center; padding: 16px; }
+.sheet { background: var(--surface); border-radius: 20px; padding: 22px; width: min(380px, 100%); display: grid; gap: 16px; box-shadow: var(--shadow); }
+.sheet h3 { margin: 0; font-size: 20px; }
+.sheet input[type="number"] { min-height: var(--tap); border-radius: 12px; border: 1px solid var(--line); background: var(--bg); padding: 0 16px; font-size: 22px; font-weight: 700; width: 100%; }
+.sheet-actions { display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap; }
+#zoom { position: fixed; inset: 0; z-index: 30; background: var(--stage); display: grid; grid-template-rows: auto 1fr; }
+#zoomScroll { overflow: auto; -webkit-overflow-scrolling: touch; touch-action: pan-x pan-y; }
+#zoomPages { display: grid; gap: 16px; padding: 16px; justify-content: center; }
+#zoomPages img { display: block; background: var(--paper); box-shadow: var(--shadow); max-width: none; }
+.zlevel { min-width: 70px; text-align: center; font-weight: 700; font-variant-numeric: tabular-nums; }
+#loading { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; background: rgba(5, 8, 14, .45); }
+.loading-card { background: var(--surface); border-radius: 18px; padding: 22px 26px; display: flex; gap: 14px; align-items: center; font-weight: 700; box-shadow: var(--shadow); }
+.spin { width: 28px; height: 28px; border-radius: 50%; border: 4px solid var(--line); border-top-color: var(--accent); animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+#toast {
+  position: fixed; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); z-index: 60;
+  background: var(--fg); color: var(--bg); padding: 14px 20px; border-radius: 14px; max-width: min(520px, calc(100% - 32px)); font-weight: 700; box-shadow: var(--shadow);
+}
+@media (max-width: 600px) {
+  .nav { width: 52px; height: 52px; opacity: .9; }
+  .hide-sm { display: none; }
+  .pageno { min-width: 90px; }
+}
+@media (prefers-reduced-motion: reduce) { .spin { animation-duration: 2s; } }
+</style>
+
+<!-- ============ HOME ============ -->
+<section id="home">
+  <div class="home-inner">
+    <header class="brand">
+      <div>
+        <h1>FlipBaca</h1>
+        <p>Baca PDF seperti membalik buku. Tanpa iklan, tanpa akun, file tetap di perangkat ini.</p>
+      </div>
+    </header>
+
+    <div class="drop" id="drop">
+      <p><strong>Buka PDF dari iPad</strong>Pilih dari app Files, iCloud Drive, atau seret file ke sini.</p>
+      <button class="btn primary" id="pick" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+        Buka PDF
+      </button>
+      <input type="file" id="file" accept="application/pdf,.pdf" hidden>
+    </div>
+
+    <div class="shelf-head"><h2>Rak buku</h2><span id="shelfCount"></span></div>
+    <div class="shelf" id="shelf"></div>
+    <p class="note" id="storeNote" hidden>Browser ini tidak mengizinkan penyimpanan, jadi rak buku akan kosong lagi setelah halaman ditutup.</p>
+  </div>
+</section>
+
+<!-- ============ READER ============ -->
+<section id="reader" hidden>
+  <div class="bar top">
+    <button class="btn back" id="back" type="button" aria-label="Kembali ke rak buku">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg>
+      Rak
+    </button>
+    <div class="title" id="title"></div>
+    <button class="icon-btn" id="layoutBtn" type="button" aria-label="Ganti 1 atau 2 halaman" title="1 / 2 halaman">
+      <svg id="icoDouble" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M3 5.5c3-1 6-1 9 1 3-2 6-2 9-1v13c-3-1-6-1-9 1-3-2-6-2-9-1z"/><path d="M12 6.5v13"/></svg>
+      <svg id="icoSingle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" hidden><rect x="6" y="3" width="12" height="18" rx="1.5"/><path d="M9 8h6M9 12h6M9 16h4" stroke-linecap="round"/></svg>
+    </button>
+    <button class="icon-btn" id="zoomBtn" type="button" aria-label="Perbesar halaman" title="Perbesar">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21M10.5 7.5v6M7.5 10.5h6"/></svg>
+    </button>
+    <button class="icon-btn" id="fsBtn" type="button" aria-label="Layar penuh" title="Layar penuh" hidden>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
+    </button>
+  </div>
+
+  <div class="stage" id="stage">
+    <div id="host"></div>
+    <button class="nav" id="prev" type="button" aria-label="Halaman sebelumnya">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg>
+    </button>
+    <button class="nav" id="next" type="button" aria-label="Halaman berikutnya">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg>
+    </button>
+  </div>
+
+  <div class="bar bottom">
+    <button class="pageno" id="pageno" type="button" aria-label="Lompat ke halaman">1 / 1</button>
+    <div class="slider-wrap">
+      <input type="range" id="slider" min="1" max="1" value="1" aria-label="Geser untuk pindah halaman">
+      <div class="bubble" id="bubble" hidden></div>
+    </div>
+  </div>
+</section>
+
+<!-- jump to page -->
+<div class="sheet-bg" id="jump" hidden>
+  <form class="sheet" id="jumpForm">
+    <h3>Lompat ke halaman</h3>
+    <input type="number" id="jumpInput" inputmode="numeric" min="1" aria-label="Nomor halaman">
+    <div class="sheet-actions">
+      <button class="btn" type="button" id="jumpCancel">Batal</button>
+      <button class="btn primary" type="submit">Buka halaman</button>
+    </div>
+  </form>
+</div>
+
+<!-- zoom view -->
+<section id="zoom" hidden>
+  <div class="bar top">
+    <button class="btn back" id="zoomClose" type="button">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      Tutup
+    </button>
+    <div class="title"></div>
+    <button class="icon-btn" id="zoomOut" type="button" aria-label="Perkecil">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M5 12h14"/></svg>
+    </button>
+    <div class="zlevel" id="zoomLevel">100%</div>
+    <button class="icon-btn" id="zoomIn" type="button" aria-label="Perbesar">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+    </button>
+  </div>
+  <div id="zoomScroll"><div id="zoomPages"></div></div>
+</section>
+
+<div id="loading" hidden><div class="loading-card"><div class="spin"></div><span id="loadingText">Membuka…</span></div></div>
+<div id="toast" role="status" aria-live="polite" hidden></div>
+
+<script>
+(() => {
+  const $ = (s) => document.querySelector(s);
+  const LIBS_OK = !!(window.pdfjsLib && window.St && window.St.PageFlip);
+  if (window.pdfjsLib) {
+    pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+  }
+
+  /* ---------------- toast & loading ---------------- */
+  let toastTimer;
+  function toast(msg, ms = 3500) {
+    const t = $("#toast"); t.textContent = msg; t.hidden = false;
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => (t.hidden = true), ms);
+  }
+  function loading(on, text) { $("#loading").hidden = !on; if (text) $("#loadingText").textContent = text; }
+
+  /* ---------------- storage (IndexedDB) ---------------- */
+  const DB = {
+    db: null, ok: false, mem: new Map(), memFiles: new Map(),
+    async init() {
+      try {
+        this.db = await new Promise((res, rej) => {
+          const r = indexedDB.open("flipbaca", 1);
+          r.onupgradeneeded = () => { r.result.createObjectStore("meta", { keyPath: "id" }); r.result.createObjectStore("files"); };
+          r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+        });
+        this.ok = true;
+      } catch (e) { this.ok = false; }
+    },
+    tx(store, mode, fn) {
+      return new Promise((res, rej) => {
+        const t = this.db.transaction(store, mode); const s = t.objectStore(store); const r = fn(s);
+        t.oncomplete = () => res(r && r.result); t.onerror = () => rej(t.error); t.onabort = () => rej(t.error);
+      });
+    },
+    async all() {
+      if (!this.ok) return [...this.mem.values()];
+      try { return (await this.tx("meta", "readonly", (s) => s.getAll())) || []; } catch { return []; }
+    },
+    async putMeta(rec) { if (!this.ok) { this.mem.set(rec.id, rec); return; } return this.tx("meta", "readwrite", (s) => s.put(rec)); },
+    async putFile(id, blob) { if (!this.ok) { this.memFiles.set(id, blob); return; } return this.tx("files", "readwrite", (s) => s.put(blob, id)); },
+    async getFile(id) { if (!this.ok) return this.memFiles.get(id); return this.tx("files", "readonly", (s) => s.get(id)); },
+    async del(id) {
+      if (!this.ok) { this.mem.delete(id); this.memFiles.delete(id); return; }
+      await this.tx("meta", "readwrite", (s) => s.delete(id)); await this.tx("files", "readwrite", (s) => s.delete(id));
+    },
+  };
+
+  /* ---------------- page sources ---------------- */
+  async function makePdfSource(buf) {
+    const doc = await pdfjsLib.getDocument({ data: buf, isEvalSupported: false }).promise;
+    const p1 = await doc.getPage(1); const v = p1.getViewport({ scale: 1 });
+    return {
+      numPages: doc.numPages, aspect: v.width / v.height,
+      async render(i, tw) {
+        const page = await doc.getPage(i + 1);
+        const base = page.getViewport({ scale: 1 });
+        const vp = page.getViewport({ scale: tw / base.width });
+        const c = document.createElement("canvas");
+        c.width = Math.max(1, Math.floor(vp.width)); c.height = Math.max(1, Math.floor(vp.height));
+        const ctx = c.getContext("2d"); ctx.fillStyle = "#FFFFFF"; ctx.fillRect(0, 0, c.width, c.height);
+        await page.render({ canvasContext: ctx, viewport: vp }).promise;
+        page.cleanup();
+        return c;
+      },
+      destroy() { try { doc.destroy(); } catch {} },
+    };
+  }
+
+  const DEMO = [
+    { kind: "cover", title: "Panduan FlipBaca", sub: "Enam halaman singkat. Coba balik halaman ini." },
+    { title: "Membalik halaman", body: "Geser halaman dengan jari dari tepi kanan ke kiri, seperti buku sungguhan. Tarik sudut halaman pelan-pelan untuk melihat lipatannya. Atau ketuk tombol panah besar di kiri dan kanan layar." },
+    { title: "Melompat ke halaman", body: "Geser slider di bagian bawah untuk berpindah cepat. Angka kecil di atas jari menunjukkan tujuanmu. Ketuk nomor halaman di kiri bawah untuk mengetik nomor halaman langsung." },
+    { title: "Memperbesar", body: "Ketuk ikon kaca pembesar di kanan atas. Gunakan tombol plus dan minus untuk mengatur ukuran, lalu geser untuk membaca bagian yang kecil." },
+    { title: "Satu atau dua halaman", body: "Saat iPad miring, buku terbuka dua halaman. Saat tegak, satu halaman. Tombol buku di kanan atas bisa memaksa satu atau dua halaman kapan saja." },
+    { kind: "back", title: "Rak buku pribadi", body: "PDF yang kamu buka disimpan di rak, hanya di browser iPad ini. Halaman terakhir yang kamu baca juga diingat. Tidak ada file yang diunggah ke mana pun. Selamat membaca." },
+  ];
+  function wrapText(ctx, text, maxW) {
+    const words = text.split(" "); const lines = []; let line = "";
+    for (const w of words) {
+      const test = line ? line + " " + w : w;
+      if (ctx.measureText(test).width > maxW && line) { lines.push(line); line = w; } else line = test;
+    }
+    if (line) lines.push(line); return lines;
+  }
+  function makeDemoSource() {
+    const aspect = 0.72;
+    return {
+      numPages: DEMO.length, aspect, demo: true,
+      async render(i, tw) {
+        try { await document.fonts.ready; } catch {}
+        const th = Math.round(tw / aspect); const k = tw / 600;
+        const c = document.createElement("canvas"); c.width = tw; c.height = th;
+        const x = c.getContext("2d"); const p = DEMO[i];
+        const ink = "#182032", soft = "#5B667A", blue = "#1D5BD6";
+        x.fillStyle = "#FFFFFF"; x.fillRect(0, 0, tw, th);
+        if (p.kind === "cover") {
+          x.fillStyle = blue; x.fillRect(0, 0, tw, th);
+          x.fillStyle = "rgba(255,255,255,.12)";
+          for (let r = 0; r < 9; r++) { x.fillRect(0, th * 0.62 + r * 18 * k, tw, 2 * k); }
+          x.fillStyle = "#FFFFFF"; x.font = `700 ${64 * k}px Literata, Georgia, serif`;
+          let y = 210 * k; for (const l of wrapText(x, p.title, tw - 120 * k)) { x.fillText(l, 60 * k, y); y += 74 * k; }
+          x.font = `400 ${26 * k}px "Atkinson Hyperlegible", sans-serif`; x.fillStyle = "rgba(255,255,255,.88)";
+          y += 20 * k; for (const l of wrapText(x, p.sub, tw - 120 * k)) { x.fillText(l, 60 * k, y); y += 36 * k; }
+          x.font = `700 ${20 * k}px "Atkinson Hyperlegible", sans-serif`; x.fillStyle = "#FFFFFF";
+          x.fillText("CONTOH BUKU", 60 * k, th - 60 * k);
+          return c;
+        }
+        x.fillStyle = blue; x.fillRect(60 * k, 90 * k, 46 * k, 6 * k);
+        x.fillStyle = ink; x.font = `700 ${44 * k}px Literata, Georgia, serif`;
+        let y = 160 * k; for (const l of wrapText(x, p.title, tw - 120 * k)) { x.fillText(l, 60 * k, y); y += 54 * k; }
+        x.font = `400 ${27 * k}px "Atkinson Hyperlegible", sans-serif`; x.fillStyle = soft; y += 22 * k;
+        for (const l of wrapText(x, p.body, tw - 120 * k)) { x.fillText(l, 60 * k, y); y += 42 * k; }
+        x.font = `700 ${20 * k}px "Atkinson Hyperlegible", sans-serif`; x.fillStyle = soft;
+        x.fillText(String(i + 1), i % 2 ? 60 * k : tw - 76 * k, th - 50 * k);
+        return c;
+      },
+      destroy() {},
+    };
+  }
+  const DEMO_REC = { id: "demo", name: "Panduan FlipBaca", pages: DEMO.length, lastPage: 0, demo: true };
+
+  /* ---------------- reader state ---------------- */
+  const S = {
+    source: null, book: null, pf: null, pages: [], cache: new Map(),
+    pw: 0, ph: 0, spread: false, mode: "auto", current: 0, gen: 0, pumping: false, wanted: [],
+  };
+  try { S.mode = localStorage.getItem("flipbaca.mode") || "auto"; } catch {}
+  const dpr = () => Math.min(window.devicePixelRatio || 1, 2.5);
+
+  function targetWidth(cssW) {
+    const a = S.source.aspect; const maxArea = 6e6; // stays under iPad canvas limits
+    return Math.round(Math.min(cssW * dpr(), Math.sqrt(maxArea * a)));
+  }
+
+  function computeLayout() {
+    const st = $("#stage").getBoundingClientRect();
+    const wide = st.width > 760;
+    const padX = wide ? 92 : 10, padY = wide ? 24 : 12;
+    const W = Math.max(100, st.width - padX * 2), H = Math.max(100, st.height - padY * 2);
+    const a = S.source.aspect; const n = S.source.numPages;
+    let spread = S.mode === "double" || (S.mode === "auto" && W / H > a * 1.25);
+    if (n < 2) spread = false;
+    const pw = Math.floor(spread ? Math.min(W / 2, H * a) : Math.min(W, H * a));
+    return { pw, ph: Math.floor(pw / a), spread };
+  }
+
+  function build(startPage) {
+    const L = computeLayout();
+    S.pw = L.pw; S.ph = L.ph; S.spread = L.spread;
+    if (S.pf) { try { S.pf.destroy(); } catch {} S.pf = null; }
+    const host = $("#host"); host.innerHTML = "";
+    const el = document.createElement("div");
+    el.style.width = (S.spread ? S.pw * 2 : S.pw) + "px"; el.style.height = S.ph + "px";
+    host.appendChild(el);
+    S.pages = [];
+    for (let i = 0; i < S.source.numPages; i++) {
+      const d = document.createElement("div"); d.className = "page";
+      const img = document.createElement("img"); img.alt = "";
+      const num = document.createElement("span"); num.className = "pnum"; num.textContent = i + 1;
+      d.append(img, num);
+      const c = S.cache.get(i); if (c) { img.src = c.url; d.classList.add("ready"); }
+      el.appendChild(d); S.pages.push(d);
+    }
+    S.pf = new St.PageFlip(el, {
+      width: S.pw, height: S.ph, size: "fixed", autoSize: false,
+      usePortrait: !S.spread, showCover: S.spread, startPage: Math.min(startPage, S.source.numPages - 1),
+      maxShadowOpacity: 0.45, flippingTime: 650, mobileScrollSupport: false, drawShadow: true,
+      showPageCorners: true, swipeDistance: 25, clickEventForward: false, useMouseEvents: true,
+    });
+    S.pf.loadFromHTML(S.pages);
+    S.pf.on("flip", (e) => onPage(e.data));
+    onPage(S.pf.getCurrentPageIndex());
+    updateLayoutIcon();
+  }
+
+  function visiblePages() {
+    const n = S.source.numPages, c = S.current;
+    if (!S.spread || c === 0) return [c];
+    return [c, c + 1].filter((i) => i < n);
+  }
+
+  let saveTimer;
+  function onPage(i) {
+    S.current = i;
+    const n = S.source.numPages; const vis = visiblePages();
+    const label = vis.length > 1 ? `${vis[0] + 1}–${vis[1] + 1}` : `${vis[0] + 1}`;
+    $("#pageno").textContent = `${label} / ${n}`;
+    const sl = $("#slider"); sl.max = n; sl.value = vis[0] + 1; setFill();
+    $("#prev").disabled = i <= 0;
+    $("#next").disabled = vis[vis.length - 1] >= n - 1;
+    scheduleRender();
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+      if (!S.book) return; S.book.lastPage = i; S.book.lastOpened = Date.now();
+      if (S.book.demo) { try { localStorage.setItem("flipbaca.demoPage", String(i)); } catch {} return; }
+      DB.putMeta(S.book).catch(() => {});
+    }, 400);
+  }
+
+  /* ---------------- lazy page rendering ---------------- */
+  function scheduleRender() {
+    const n = S.source.numPages, c = S.current;
+    const order = [c, c + 1, c - 1, c + 2, c + 3, c - 2, c + 4, c + 5, c - 3, c + 6];
+    const tw = targetWidth(S.pw);
+    S.wanted = order.filter((i) => i >= 0 && i < n && !(S.cache.get(i) && S.cache.get(i).w >= tw * 0.85));
+    // drop far-away pages to keep memory low
+    for (const [k, v] of S.cache) {
+      if (Math.abs(k - c) > 10) {
+        URL.revokeObjectURL(v.url); S.cache.delete(k);
+        const pg = S.pages[k]; if (pg) { pg.querySelector("img").removeAttribute("src"); pg.classList.remove("ready"); }
+      }
+    }
+    pump();
+  }
+  async function canvasToUrl(c) {
+    const blob = await new Promise((r) => c.toBlob(r, "image/jpeg", 0.92));
+    c.width = c.height = 0;
+    return URL.createObjectURL(blob);
+  }
+  async function pump() {
+    if (S.pumping) return; S.pumping = true; const g = S.gen;
+    try {
+      while (S.wanted.length && g === S.gen) {
+        const i = S.wanted.shift(); const tw = targetWidth(S.pw);
+        const have = S.cache.get(i); if (have && have.w >= tw * 0.85) continue;
+        try {
+          const c = await S.source.render(i, tw); if (g !== S.gen) break;
+          const url = await canvasToUrl(c); if (g !== S.gen) { URL.revokeObjectURL(url); break; }
+          if (have) URL.revokeObjectURL(have.url);
+          S.cache.set(i, { url, w: tw });
+          const pg = S.pages[i]; if (pg) { pg.querySelector("img").src = url; pg.classList.add("ready"); }
+        } catch (e) { console.warn("render failed", i, e); }
+      }
+    } finally { if (g === S.gen) S.pumping = false; }
+  }
+
+  function resetReader() {
+    S.gen++; S.pumping = false; S.wanted = [];
+    for (const v of S.cache.values()) URL.revokeObjectURL(v.url);
+    S.cache.clear();
+    if (S.pf) { try { S.pf.destroy(); } catch {} S.pf = null; }
+    $("#host").innerHTML = "";
+    if (S.source) S.source.destroy(); S.source = null;
+  }
+
+  /* ---------------- open / add books ---------------- */
+  async function openBook(rec, readySource) {
+    if (!LIBS_OK) { toast("Komponen pembaca gagal dimuat. Periksa koneksi internet lalu muat ulang halaman."); return; }
+    loading(true, "Membuka buku…");
+    try {
+      resetReader();
+      let src = readySource;
+      if (!src) {
+        if (rec.demo) src = makeDemoSource();
+        else {
+          const blob = await DB.getFile(rec.id);
+          if (!blob) throw new Error("missing");
+          src = await makePdfSource(await blob.arrayBuffer());
+        }
+      }
+      S.source = src; S.book = rec;
+      $("#title").textContent = rec.name;
+      showView("reader");
+      await new Promise((r) => requestAnimationFrame(() => r()));
+      let start = rec.lastPage || 0;
+      if (rec.demo) { try { start = +localStorage.getItem("flipbaca.demoPage") || 0; } catch {} }
+      build(start);
+      wakeLock();
+    } catch (e) {
+      console.error(e); showView("home");
+      toast(e && e.message === "missing" ? "File buku ini tidak ditemukan lagi. Hapus dari rak lalu buka ulang PDF-nya." : "Buku tidak bisa dibuka. Coba buka ulang file PDF-nya.");
+    } finally { loading(false); }
+  }
+
+  async function makeCover(src) {
+    try {
+      const c = await src.render(0, 300);
+      const url = c.toDataURL("image/jpeg", 0.8); c.width = c.height = 0; return url;
+    } catch { return ""; }
+  }
+
+  async function addFile(file) {
+    if (!file) return;
+    if (!/pdf$/i.test(file.type) && !/\.pdf$/i.test(file.name)) { toast("File ini bukan PDF. Pilih file berakhiran .pdf."); return; }
+    if (!LIBS_OK) { toast("Komponen pembaca gagal dimuat. Periksa koneksi internet lalu muat ulang halaman."); return; }
+    const existing = (await DB.all()).find((b) => b.name === file.name.replace(/\.pdf$/i, "") && b.size === file.size);
+    if (existing) { openBook(existing); return; }
+    loading(true, "Menyiapkan PDF…");
+    let src;
+    try { src = await makePdfSource(await file.arrayBuffer()); }
+    catch (e) {
+      loading(false);
+      toast(e && e.name === "PasswordException" ? "PDF ini dikunci kata sandi. Buka kuncinya dulu, lalu coba lagi." : "PDF tidak bisa dibaca. File mungkin rusak.");
+      return;
+    }
+    const rec = {
+      id: "b" + Date.now().toString(36), name: file.name.replace(/\.pdf$/i, ""), pages: src.numPages,
+      size: file.size, added: Date.now(), lastOpened: Date.now(), lastPage: 0, cover: await makeCover(src),
+    };
+    try { await DB.putFile(rec.id, file); await DB.putMeta(rec); }
+    catch { toast("Rak penuh, buku ini tidak tersimpan. Tapi tetap bisa dibaca sekarang.", 5000); }
+    loading(false);
+    openBook(rec, src);
+  }
+
+  /* ---------------- home shelf ---------------- */
+  async function renderShelf() {
+    const books = (await DB.all()).sort((a, b) => (b.lastOpened || 0) - (a.lastOpened || 0));
+    let demoPage = 0; try { demoPage = +localStorage.getItem("flipbaca.demoPage") || 0; } catch {}
+    const list = [...books, { ...DEMO_REC, lastPage: demoPage }];
+    $("#shelfCount").textContent = books.length ? `${books.length} PDF tersimpan` : "Belum ada PDF, coba buku contoh";
+    const shelf = $("#shelf"); shelf.innerHTML = "";
+    for (const b of list) {
+      const card = document.createElement("div"); card.className = "book";
+      const open = document.createElement("button"); open.type = "button"; open.className = "book-open";
+      open.setAttribute("aria-label", `Buka ${b.name}`);
+      const cover = document.createElement("div"); cover.className = "cover";
+      if (b.cover) { const im = document.createElement("img"); im.src = b.cover; im.alt = ""; cover.appendChild(im); }
+      else if (b.demo) { cover.style.background = "#1D5BD6"; cover.innerHTML = '<span style="color:#FFFFFF;font-family:var(--font-display);font-weight:700;font-size:22px;padding:14px;line-height:1.15">Panduan FlipBaca</span>'; }
+      const name = document.createElement("div"); name.className = "book-name"; name.textContent = b.name;
+      const meta = document.createElement("div"); meta.className = "book-meta";
+      const pct = b.pages > 1 ? Math.round((b.lastPage || 0) / (b.pages - 1) * 100) : 0;
+      meta.textContent = (b.lastPage ? `Hal. ${b.lastPage + 1} dari ${b.pages}` : `${b.pages} halaman`) + (b.demo ? " · contoh" : "");
+      const prog = document.createElement("div"); prog.className = "progress"; prog.innerHTML = `<i style="width:${pct}%"></i>`;
+      open.append(cover, name, meta, prog);
+      open.addEventListener("click", () => openBook(b));
+      card.appendChild(open);
+      if (!b.demo) {
+        const del = document.createElement("button"); del.type = "button"; del.className = "del";
+        del.setAttribute("aria-label", `Hapus ${b.name} dari rak`);
+        const icon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>';
+        del.innerHTML = icon; let t;
+        del.addEventListener("click", async (e) => {
+          e.stopPropagation();
+          if (!del.classList.contains("confirm")) {
+            del.classList.add("confirm"); del.textContent = "Hapus?";
+            t = setTimeout(() => { del.classList.remove("confirm"); del.innerHTML = icon; }, 3000);
+            return;
+          }
+          clearTimeout(t); await DB.del(b.id).catch(() => {}); toast(`"${b.name}" dihapus dari rak.`); renderShelf();
+        });
+        cover.appendChild(del);
+      }
+      shelf.appendChild(card);
+    }
+  }
+
+  function showView(v) {
+    $("#home").hidden = v !== "home"; $("#reader").hidden = v !== "reader";
+    if (v === "home") { closeZoom(); releaseWake(); renderShelf(); }
+  }
+
+  /* ---------------- controls ---------------- */
+  $("#pick").addEventListener("click", () => $("#file").click());
+  $("#file").addEventListener("change", (e) => { const f = e.target.files[0]; e.target.value = ""; addFile(f); });
+  const drop = $("#drop");
+  ["dragenter", "dragover"].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add("over"); }));
+  ["dragleave", "drop"].forEach((ev) => drop.addEventListener(ev, () => drop.classList.remove("over")));
+  drop.addEventListener("drop", (e) => { e.preventDefault(); addFile(e.dataTransfer.files[0]); });
+
+  $("#back").addEventListener("click", () => { resetReader(); S.book = null; showView("home"); });
+  $("#prev").addEventListener("click", () => S.pf && S.pf.flipPrev());
+  $("#next").addEventListener("click", () => S.pf && S.pf.flipNext());
+
+  function goTo(i) {
+    if (!S.pf) return; i = Math.max(0, Math.min(S.source.numPages - 1, i));
+    if (S.spread && i > 0 && i % 2 === 0) i -= 1; // spreads start on odd index after the cover
+    if (Math.abs(i - S.current) <= 2) S.pf.flip(i); else { S.pf.turnToPage(i); onPage(S.pf.getCurrentPageIndex()); }
+  }
+
+  const slider = $("#slider"), bubble = $("#bubble");
+  function setFill() { const max = +slider.max || 1; slider.style.setProperty("--fill", max > 1 ? ((slider.value - 1) / (max - 1)) * 100 + "%" : "0%"); }
+  slider.addEventListener("input", () => {
+    setFill(); bubble.hidden = false; bubble.textContent = `Hal. ${slider.value}`;
+    const max = +slider.max || 1; const pct = max > 1 ? (slider.value - 1) / (max - 1) : 0;
+    bubble.style.left = `calc(${pct * 100}% + ${(0.5 - pct) * 34}px)`;
+  });
+  slider.addEventListener("change", () => { bubble.hidden = true; goTo(+slider.value - 1); });
+
+  $("#pageno").addEventListener("click", () => {
+    const inp = $("#jumpInput"); inp.max = S.source.numPages; inp.value = S.current + 1; $("#jump").hidden = false;
+    setTimeout(() => { inp.focus(); inp.select(); }, 50);
+  });
+  $("#jumpCancel").addEventListener("click", () => ($("#jump").hidden = true));
+  $("#jump").addEventListener("click", (e) => { if (e.target.id === "jump") $("#jump").hidden = true; });
+  $("#jumpForm").addEventListener("submit", (e) => {
+    e.preventDefault(); const v = parseInt($("#jumpInput").value, 10);
+    if (!v || v < 1 || v > S.source.numPages) { toast(`Isi angka 1 sampai ${S.source.numPages}.`); return; }
+    $("#jump").hidden = true; goTo(v - 1);
+  });
+
+  function updateLayoutIcon() {
+    $("#icoDouble").hidden = S.spread; $("#icoSingle").hidden = !S.spread;
+    $("#layoutBtn").setAttribute("aria-label", S.spread ? "Tampilkan 1 halaman" : "Tampilkan 2 halaman");
+  }
+  $("#layoutBtn").addEventListener("click", () => {
+    if (!S.source) return;
+    S.mode = S.spread ? "single" : "double";
+    try { localStorage.setItem("flipbaca.mode", S.mode); } catch {}
+    build(S.current);
+    toast(S.spread ? "Tampilan 2 halaman" : "Tampilan 1 halaman", 1500);
+  });
+
+  /* fullscreen (iPad Safari supports it on iPadOS 12+) */
+  const fsEl = document.documentElement;
+  const canFs = !!(document.fullscreenEnabled || document.webkitFullscreenEnabled);
+  $("#fsBtn").hidden = !canFs;
+  $("#fsBtn").addEventListener("click", async () => {
+    try {
+      if (document.fullscreenElement || document.webkitFullscreenElement) {
+        await (document.exitFullscreen ? document.exitFullscreen() : document.webkitExitFullscreen());
+      } else {
+        await (fsEl.requestFullscreen ? fsEl.requestFullscreen() : fsEl.webkitRequestFullscreen());
+      }
+    } catch { toast("Layar penuh tidak tersedia di sini."); }
+  });
+
+  /* keep screen on while reading */
+  let wl = null;
+  async function wakeLock() { try { if (navigator.wakeLock && !wl) { wl = await navigator.wakeLock.request("screen"); wl.addEventListener("release", () => (wl = null)); } } catch {} }
+  function releaseWake() { try { wl && wl.release(); } catch {} wl = null; }
+  document.addEventListener("visibilitychange", () => { if (!document.hidden && S.book) wakeLock(); });
+
+  /* ---------------- zoom ---------------- */
+  const ZOOMS = [1, 1.5, 2, 3];
+  let zi = 0, zoomGen = 0, zoomUrls = [];
+  async function renderZoom() {
+    const g = ++zoomGen; const wrap = $("#zoomPages");
+    const vis = visiblePages();
+    const avail = Math.min(window.innerWidth - 32, 1400);
+    const cssW = Math.round(avail * ZOOMS[zi]);
+    $("#zoomLevel").textContent = Math.round(ZOOMS[zi] * 100) + "%";
+    $("#zoomOut").disabled = zi === 0; $("#zoomIn").disabled = zi === ZOOMS.length - 1;
+    const old = zoomUrls; zoomUrls = [];
+    const imgs = [];
+    for (const i of vis) {
+      const im = document.createElement("img"); im.alt = `Halaman ${i + 1}`;
+      im.style.width = cssW + "px"; im.style.height = Math.round(cssW / S.source.aspect) + "px";
+      const cached = S.cache.get(i); if (cached) im.src = cached.url;
+      imgs.push(im);
+    }
+    wrap.replaceChildren(...imgs);
+    old.forEach((u) => URL.revokeObjectURL(u));
+    for (let k = 0; k < vis.length; k++) {
+      try {
+        const c = await S.source.render(vis[k], targetWidth(cssW)); if (g !== zoomGen) return;
+        const url = await canvasToUrl(c); if (g !== zoomGen) { URL.revokeObjectURL(url); return; }
+        zoomUrls.push(url); imgs[k].src = url;
+      } catch (e) { console.warn(e); }
+    }
+  }
+  function openZoom() { if (!S.source) return; zi = 1; $("#zoom").hidden = false; $("#zoomScroll").scrollTo(0, 0); renderZoom(); }
+  function closeZoom() { zoomGen++; $("#zoom").hidden = true; $("#zoomPages").replaceChildren(); zoomUrls.forEach((u) => URL.revokeObjectURL(u)); zoomUrls = []; }
+  $("#zoomBtn").addEventListener("click", openZoom);
+  $("#zoomClose").addEventListener("click", closeZoom);
+  $("#zoomIn").addEventListener("click", () => { if (zi < ZOOMS.length - 1) { zi++; renderZoom(); } });
+  $("#zoomOut").addEventListener("click", () => { if (zi > 0) { zi--; renderZoom(); } });
+
+  /* keyboard */
+  document.addEventListener("keydown", (e) => {
+    if (!$("#jump").hidden) { if (e.key === "Escape") $("#jump").hidden = true; return; }
+    if (!$("#zoom").hidden) { if (e.key === "Escape") closeZoom(); return; }
+    if ($("#reader").hidden || !S.pf) return;
+    if (e.key === "ArrowRight" || e.key === "PageDown" || e.key === " ") { e.preventDefault(); S.pf.flipNext(); }
+    if (e.key === "ArrowLeft" || e.key === "PageUp") { e.preventDefault(); S.pf.flipPrev(); }
+  });
+
+  /* rebuild when the iPad rotates or the window resizes */
+  let rT, lastSize = "";
+  function onResize() {
+    clearTimeout(rT);
+    rT = setTimeout(() => {
+      if (!S.source || $("#reader").hidden) return;
+      const L = computeLayout(); const key = `${L.pw}x${L.ph}x${L.spread}`;
+      if (key === lastSize) return; lastSize = key; build(S.current);
+      if (!$("#zoom").hidden) renderZoom();
+    }, 220);
+  }
+  window.addEventListener("resize", onResize);
+  window.addEventListener("orientationchange", onResize);
+
+  /* ---------------- start ---------------- */
+  (async () => {
+    await DB.init();
+    $("#storeNote").hidden = DB.ok;
+    await renderShelf();
+    if (!LIBS_OK) toast("Komponen pembaca gagal dimuat. Periksa koneksi internet lalu muat ulang halaman.", 8000);
+  })();
+  window.__flipbaca = { addFile, S };
+})();
+</script>
