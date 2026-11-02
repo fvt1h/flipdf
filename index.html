@@ -187,9 +187,20 @@ input[type="range"]::-moz-range-thumb { width: 30px; height: 30px; border-radius
 .page { background: var(--paper); overflow: hidden; }
 .page img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; display: block; user-select: none; -webkit-user-select: none; -webkit-user-drag: none; pointer-events: none; opacity: 0; transition: opacity .28s ease; }
 .page.ready img { opacity: 1; }
-.single-book { position: relative; perspective: 2400px; touch-action: none; box-shadow: 0 14px 40px rgba(0,0,0,.32); }
-.single-book .sp-page { position: absolute; inset: 0; transform-origin: left center; backface-visibility: hidden; -webkit-backface-visibility: hidden; will-change: transform; }
-.sp-shade { position: absolute; inset: 0; pointer-events: none; opacity: 0; background: linear-gradient(90deg, rgba(0,0,0,.6), rgba(0,0,0,.2) 45%, rgba(0,0,0,.05)); }
+/* one-page curl: the turning page is clipped at the fold, its back side is the flap */
+.single-book { position: relative; touch-action: none; box-shadow: 0 14px 40px rgba(0,0,0,.32); }
+.single-book .sp-page { position: absolute; inset: 0; }
+.sp-flap, .sp-cast, .sp-bend { position: absolute; top: 0; left: 0; height: 100%; pointer-events: none; will-change: transform; }
+.sp-flap { width: 100%; z-index: 4; background: var(--paper); overflow: hidden; }
+.sp-back { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; transform: scaleX(-1); opacity: .16; max-width: none; }
+.sp-flap-shade {
+  position: absolute; top: 0; left: 0; height: 100%;
+  background: linear-gradient(to left, rgba(0,0,0,.20) 0, rgba(255,255,255,.55) 3%, rgba(255,255,255,.10) 22%, rgba(0,0,0,.04) 60%, rgba(0,0,0,.14) 100%);
+}
+/* shadow the flap casts on the page underneath, right of the fold */
+.sp-cast { width: 90px; z-index: 3; background: linear-gradient(to right, rgba(0,0,0,.38), rgba(0,0,0,.12) 40%, rgba(0,0,0,0)); }
+/* the turning page darkens slightly as it bends toward the fold */
+.sp-bend { width: 60px; z-index: 3; background: linear-gradient(to right, rgba(0,0,0,0), rgba(0,0,0,.10)); }
 .page .pnum { transition: opacity .2s ease; }
 .page .pnum { position: absolute; inset: 0; display: grid; place-items: center; color: var(--paper-ink); font-family: var(--font-display); font-size: 28px; }
 .page.ready .pnum { display: none; }
@@ -535,51 +546,71 @@ input[type="range"]::-moz-range-thumb { width: 30px; height: 30px; border-radius
     updateLayoutIcon();
   }
 
-  /* One-page mode: the page swings open on its left edge (like a book cover)
-     until it is edge-on and gone, revealing the next page underneath.
-     Follows the finger while dragging. Same API as PageFlip for the parts we use. */
+  /* One-page mode: an Apple Books style page curl. The page folds over from the
+     right edge, its back side shows as a flap, and the flap slides off the left
+     edge while the next page is revealed. The page corner follows the finger.
+     Same API as PageFlip for the parts we use. */
   class SingleFlipper {
     constructor(el, start) {
       this.el = el; this.cur = start; this.handlers = {}; this.busy = false; this.dir = 0; this.p = 0; this.raf = 0;
       el.classList.add("single-book");
+      const mk = (cls, tag = "div") => { const x = document.createElement(tag); x.className = cls; return x; };
+      this.flap = mk("sp-flap"); this.back = mk("sp-back", "img"); this.back.alt = "";
+      this.flapShade = mk("sp-flap-shade"); this.flap.append(this.back, this.flapShade);
+      this.cast = mk("sp-cast"); this.bend = mk("sp-bend");
     }
     on(ev, fn) { (this.handlers[ev] = this.handlers[ev] || []).push(fn); return this; }
     emit(ev, data) { (this.handlers[ev] || []).forEach((f) => f({ data })); }
     loadFromHTML(pages) {
       this.pages = pages; this.n = pages.length; this.cur = Math.max(0, Math.min(this.cur, this.n - 1));
-      for (const p of pages) { p.classList.add("sp-page"); const s = document.createElement("div"); s.className = "sp-shade"; p.appendChild(s); }
+      for (const p of pages) p.classList.add("sp-page");
+      this.el.append(this.cast, this.bend, this.flap);
       this.showOnly(this.cur); this.bind();
     }
     destroy() { cancelAnimationFrame(this.raf); this.el.remove(); }
     getCurrentPageIndex() { return this.cur; }
     showOnly(i) {
-      this.pages.forEach((p, k) => {
-        p.style.display = k === i ? "block" : "none"; p.style.zIndex = k === i ? 1 : 0; p.style.transform = "";
-        p.lastChild.style.opacity = 0;
-      });
+      this.pages.forEach((p, k) => { p.style.display = k === i ? "block" : "none"; p.style.zIndex = k === i ? 1 : 0; p.style.clipPath = ""; });
+      for (const x of [this.flap, this.cast, this.bend]) x.style.display = "none";
     }
     turnToPage(i) { this.finishNow(); this.cur = Math.max(0, Math.min(this.n - 1, i)); this.showOnly(this.cur); }
     flip(i) {
       if (i === this.cur + 1) this.flipNext(); else if (i === this.cur - 1) this.flipPrev();
       else if (i !== this.cur) { this.turnToPage(i); this.emit("flip", this.cur); }
     }
-    flipNext() { if (this.busy || this.cur >= this.n - 1) return; this.begin(1); this.animateTo(1, 620, false); }
-    flipPrev() { if (this.busy || this.cur <= 0) return; this.begin(-1); this.animateTo(1, 620, false); }
+    flipNext() { if (this.busy || this.cur >= this.n - 1) return; this.begin(1); this.animateTo(1, 760, false); }
+    flipPrev() { if (this.busy || this.cur <= 0) return; this.begin(-1); this.animateTo(0, 760, false); }
     begin(dir) {
-      this.busy = true; this.dir = dir; this.p = 0;
+      this.busy = true; this.dir = dir;
+      this.W = this.el.clientWidth;
+      const r = this.el.getBoundingClientRect(), stage = this.el.closest(".stage");
+      const sr = stage ? stage.getBoundingClientRect() : r;
+      this.m = Math.max(0, r.left - sr.left) + 24; // distance the flap travels past the spine to leave the screen
       this.moving = this.pages[dir > 0 ? this.cur : this.cur - 1];
       this.under = this.pages[dir > 0 ? this.cur + 1 : this.cur];
       this.under.style.display = "block"; this.under.style.zIndex = 1;
       this.moving.style.display = "block"; this.moving.style.zIndex = 2;
-      this.apply(0); this.emit("changeState", "flipping");
+      const img = this.moving.querySelector("img");
+      if (img && img.getAttribute("src")) { this.back.src = img.src; this.back.style.display = "block"; } else this.back.style.display = "none";
+      for (const x of [this.flap, this.cast, this.bend]) x.style.display = "block";
+      this.apply(dir > 0 ? 0 : 1);
+      this.emit("changeState", "flipping");
     }
+    // p = 0: page flat. p = 1: page completely turned and gone off the left edge.
     apply(p) {
       this.p = p;
-      // positive angle = the page swings away from the viewer, so it never grows past the book
-      const ang = this.dir > 0 ? 90 * p : 90 * (1 - p); const t = Math.abs(ang) / 90;
-      this.moving.style.transform = `rotateY(${ang.toFixed(2)}deg)`;
-      this.moving.lastChild.style.opacity = (0.4 * t).toFixed(3);
-      this.under.lastChild.style.opacity = (0.45 * (1 - t)).toFixed(3);
+      const W = this.W, m = this.m, f = W - p * (W + m); // f = fold line, in px from the spine
+      const clamp = (v) => Math.max(0, Math.min(1, v));
+      this.moving.style.clipPath = `inset(0 ${Math.min(W, W - f).toFixed(1)}px 0 0)`;
+      this.flap.style.transform = `translate3d(${(2 * f - W).toFixed(1)}px,0,0)`;
+      const inset = Math.max(0, f);
+      this.flap.style.clipPath = `inset(0 ${inset.toFixed(1)}px 0 0)`;
+      this.flapShade.style.width = (W - inset).toFixed(1) + "px";
+      const fadeIn = clamp((W - f) / 36);
+      this.cast.style.transform = `translate3d(${f.toFixed(1)}px,0,0)`;
+      this.cast.style.opacity = (fadeIn * clamp((f + m) / (m + 80))).toFixed(3);
+      this.bend.style.transform = `translate3d(${(f - 60).toFixed(1)}px,0,0)`;
+      this.bend.style.opacity = (fadeIn * clamp(f / 60)).toFixed(3);
     }
     animateTo(target, dur, easeOut) {
       cancelAnimationFrame(this.raf);
@@ -588,18 +619,22 @@ input[type="range"]::-moz-range-thumb { width: 30px; height: 30px; border-radius
       const step = (now) => {
         const x = Math.min(1, (now - t0) / dur);
         this.apply(p0 + (target - p0) * ease(x));
-        if (x < 1) this.raf = requestAnimationFrame(step); else this.end(target === 1);
+        if (x < 1) this.raf = requestAnimationFrame(step);
+        else this.end(this.dir > 0 ? target === 1 : target === 0);
       };
       this.raf = requestAnimationFrame(step);
     }
     end(done) {
-      const dir = this.dir;
-      if (done) this.cur += dir;
+      if (done) this.cur += this.dir;
       this.showOnly(this.cur); this.busy = false; this.dir = 0;
       if (done) this.emit("flip", this.cur);
       this.emit("changeState", "read");
     }
-    finishNow() { if (this.busy) { cancelAnimationFrame(this.raf); this.end(this.p > 0.5); } }
+    finishNow() {
+      if (!this.busy) return;
+      cancelAnimationFrame(this.raf);
+      this.end(this.dir > 0 ? this.p > 0.5 : this.p < 0.5);
+    }
     bind() {
       const el = this.el;
       let id = null, sx = 0, st = 0, lastX = 0, lastT = 0, vx = 0, drag = false;
@@ -613,22 +648,27 @@ input[type="range"]::-moz-range-thumb { width: 30px; height: 30px; border-radius
         const now = performance.now(), dx = e.clientX - sx;
         vx = (e.clientX - lastX) / Math.max(1, now - lastT); lastX = e.clientX; lastT = now;
         if (!drag) {
-          if (Math.abs(dx) < 10) return;
+          if (Math.abs(dx) < 8) return;
           const dir = dx < 0 ? 1 : -1;
           if ((dir > 0 && this.cur >= this.n - 1) || (dir < 0 && this.cur <= 0)) return;
           drag = true; this.begin(dir);
         }
-        const w = el.clientWidth;
-        this.apply(Math.max(0, Math.min(1, (this.dir > 0 ? -dx : dx) / (w * 0.85))));
+        const span = this.W + this.m;
+        // next: the page's outer edge stays under the finger (fold moves half as far)
+        // prev: the returning page follows the finger in from the left
+        const p = this.dir > 0 ? (-dx / 2) / span * 1.6 : 1 - dx / (this.W * 0.9);
+        this.apply(Math.max(0, Math.min(1, p)));
       });
       const up = (e) => {
         if (e.pointerId !== id) return; id = null;
         const dx = e.clientX - sx;
         if (drag) {
+          const turned = this.dir > 0 ? this.p : 1 - this.p;
           const fast = this.dir > 0 ? vx < -0.3 : vx > 0.3;
-          const done = (this.p > 0.35 || fast) && e.type !== "pointercancel";
-          this.animateTo(done ? 1 : 0, Math.max(180, 460 * (done ? 1 - this.p : this.p)), true);
-        } else if (Math.abs(dx) < 10 && performance.now() - st < 500) {
+          const done = (turned > 0.25 || fast) && e.type !== "pointercancel";
+          const target = this.dir > 0 ? (done ? 1 : 0) : (done ? 0 : 1);
+          this.animateTo(target, 180 + 520 * Math.abs(target - this.p), true);
+        } else if (Math.abs(dx) < 8 && performance.now() - st < 500) {
           const r = el.getBoundingClientRect(), x = e.clientX - r.left;
           if (x > r.width * 0.6) this.flipNext(); else if (x < r.width * 0.4) this.flipPrev();
         }
