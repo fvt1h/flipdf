@@ -146,6 +146,15 @@ input[type="range"]::-moz-range-thumb { width: 30px; height: 30px; border-radius
   padding: 8px 14px; border-radius: 10px; font-weight: 700; font-variant-numeric: tabular-nums; pointer-events: none; white-space: nowrap;
 }
 
+/* immersive full screen: only the book stays */
+#reader.immersive { grid-template-rows: 1fr; }
+#reader.immersive .bar, #reader.immersive .nav { display: none; }
+.exit-fs {
+  position: absolute; top: calc(14px + env(safe-area-inset-top, 0px)); left: 50%; transform: translateX(-50%); z-index: 6;
+  border-radius: 28px; box-shadow: var(--shadow);
+}
+.exit-fs:active { transform: translateX(-50%) scale(.96); }
+
 /* page-flip library styles (inlined, the CDN only serves its script) */
 .stf__parent { position: relative; display: block; box-sizing: border-box; transform: translateZ(0); touch-action: none; }
 .sft__wrapper { position: relative; width: 100%; box-sizing: border-box; }
@@ -225,13 +234,17 @@ input[type="range"]::-moz-range-thumb { width: 30px; height: 30px; border-radius
     <button class="icon-btn" id="zoomBtn" type="button" aria-label="Perbesar halaman" title="Perbesar">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21M10.5 7.5v6M7.5 10.5h6"/></svg>
     </button>
-    <button class="icon-btn" id="fsBtn" type="button" aria-label="Layar penuh" title="Layar penuh" hidden>
+    <button class="icon-btn" id="fsBtn" type="button" aria-label="Layar penuh" title="Layar penuh">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
     </button>
   </div>
 
   <div class="stage" id="stage">
     <div id="host"></div>
+    <button class="btn exit-fs" id="exitFs" type="button" hidden>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/></svg>
+      Keluar layar penuh
+    </button>
     <button class="nav" id="prev" type="button" aria-label="Halaman sebelumnya">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg>
     </button>
@@ -410,6 +423,7 @@ input[type="range"]::-moz-range-thumb { width: 30px; height: 30px; border-radius
     source: null, book: null, pf: null, pages: [], cache: new Map(),
     pw: 0, ph: 0, spread: false, mode: "auto", current: 0, gen: 0, pumping: false, wanted: [],
   };
+  let immersive = false, lastSize = "";
   try { S.mode = localStorage.getItem("flipbaca.mode") || "auto"; } catch {}
   const dpr = () => Math.min(window.devicePixelRatio || 1, 2.5);
 
@@ -421,7 +435,8 @@ input[type="range"]::-moz-range-thumb { width: 30px; height: 30px; border-radius
   function computeLayout() {
     const st = $("#stage").getBoundingClientRect();
     const wide = st.width > 760;
-    const padX = wide ? 92 : 10, padY = wide ? 24 : 12;
+    let padX = wide ? 92 : 10, padY = wide ? 24 : 12;
+    if (immersive) { padX = 6; padY = 6; }
     const W = Math.max(100, st.width - padX * 2), H = Math.max(100, st.height - padY * 2);
     const a = S.source.aspect; const n = S.source.numPages;
     let spread = S.mode === "double" || (S.mode === "auto" && W / H > a * 1.25);
@@ -633,7 +648,10 @@ input[type="range"]::-moz-range-thumb { width: 30px; height: 30px; border-radius
 
   function showView(v) {
     $("#home").hidden = v !== "home"; $("#reader").hidden = v !== "reader";
-    if (v === "home") { closeZoom(); releaseWake(); renderShelf(); }
+    if (v === "home") {
+      closeZoom(); releaseWake(); renderShelf();
+      if (immersive) { immersive = false; $("#reader").classList.remove("immersive"); $("#exitFs").hidden = true; }
+    }
   }
 
   /* ---------------- controls ---------------- */
@@ -687,18 +705,44 @@ input[type="range"]::-moz-range-thumb { width: 30px; height: 30px; border-radius
     toast(S.spread ? "Tampilan 2 halaman" : "Tampilan 1 halaman", 1500);
   });
 
-  /* fullscreen (iPad Safari supports it on iPadOS 12+) */
+  /* full screen: hide every control so only the book is left.
+     Works even where the browser's Fullscreen API is missing (e.g. Home Screen app). */
   const fsEl = document.documentElement;
-  const canFs = !!(document.fullscreenEnabled || document.webkitFullscreenEnabled);
-  $("#fsBtn").hidden = !canFs;
-  $("#fsBtn").addEventListener("click", async () => {
+  const isFs = () => !!(document.fullscreenElement || document.webkitFullscreenElement);
+  let realFs = false, exitTimer;
+  function relayout() {
+    if (!S.source || $("#reader").hidden) return;
+    requestAnimationFrame(() => { const L = computeLayout(); lastSize = `${L.pw}x${L.ph}x${L.spread}`; build(S.current); });
+  }
+  async function setImmersive(on) {
+    if (immersive === on) return;
+    immersive = on;
+    $("#reader").classList.toggle("immersive", on);
+    $("#exitFs").hidden = true; clearTimeout(exitTimer);
     try {
-      if (document.fullscreenElement || document.webkitFullscreenElement) {
-        await (document.exitFullscreen ? document.exitFullscreen() : document.webkitExitFullscreen());
-      } else {
-        await (fsEl.requestFullscreen ? fsEl.requestFullscreen() : fsEl.webkitRequestFullscreen());
+      if (on && !isFs()) {
+        if (fsEl.requestFullscreen) await fsEl.requestFullscreen();
+        else if (fsEl.webkitRequestFullscreen) fsEl.webkitRequestFullscreen();
+      } else if (!on && isFs()) {
+        if (document.exitFullscreen) await document.exitFullscreen();
+        else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
       }
-    } catch { toast("Layar penuh tidak tersedia di sini."); }
+    } catch {}
+    relayout();
+    if (on) toast("Ketuk area gelap di luar buku untuk keluar.", 2500);
+  }
+  function onFsChange() {
+    if (isFs()) realFs = true;
+    else if (realFs) { realFs = false; if (immersive) setImmersive(false); }
+  }
+  document.addEventListener("fullscreenchange", onFsChange);
+  document.addEventListener("webkitfullscreenchange", onFsChange);
+  $("#fsBtn").addEventListener("click", () => setImmersive(true));
+  $("#exitFs").addEventListener("click", (e) => { e.stopPropagation(); setImmersive(false); });
+  $("#stage").addEventListener("click", (e) => {
+    if (!immersive || e.target.closest(".stf__block") || e.target.closest("#exitFs")) return;
+    const b = $("#exitFs"); b.hidden = false; clearTimeout(exitTimer);
+    exitTimer = setTimeout(() => (b.hidden = true), 3500);
   });
 
   /* keep screen on while reading */
@@ -747,12 +791,13 @@ input[type="range"]::-moz-range-thumb { width: 30px; height: 30px; border-radius
     if (!$("#jump").hidden) { if (e.key === "Escape") $("#jump").hidden = true; return; }
     if (!$("#zoom").hidden) { if (e.key === "Escape") closeZoom(); return; }
     if ($("#reader").hidden || !S.pf) return;
+    if (e.key === "Escape" && immersive) { setImmersive(false); return; }
     if (e.key === "ArrowRight" || e.key === "PageDown" || e.key === " ") { e.preventDefault(); S.pf.flipNext(); }
     if (e.key === "ArrowLeft" || e.key === "PageUp") { e.preventDefault(); S.pf.flipPrev(); }
   });
 
   /* rebuild when the iPad rotates or the window resizes */
-  let rT, lastSize = "";
+  let rT;
   function onResize() {
     clearTimeout(rT);
     rT = setTimeout(() => {

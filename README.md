@@ -14,7 +14,8 @@ Pembaca PDF tanpa iklan dengan efek balik halaman, dibuat untuk iPad.
 | File | Fungsi |
 | --- | --- |
 | `index.html` | Aplikasinya. Ini yang dibuka lewat GitHub Pages. |
-| `.claude-artifact/index.html` | Versi untuk link claude.ai. Tidak dipakai GitHub Pages. |
+| `.claude-artifact/index.html` | Sumber utama, juga dipakai untuk link claude.ai. |
+| `build.sh` | Membuat ulang `index.html` dari sumber utama: `bash build.sh` |
 
 ## Pasang di GitHub Pages
 
